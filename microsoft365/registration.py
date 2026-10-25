@@ -76,6 +76,27 @@ def invoke_handler(handler, args):
     return result
 
 
+def tool_result(value) -> str:
+    """Serialize a dispatch result into the string the host's tool contract accepts.
+
+    The host registry (``tools/registry.py``) normalizes a handler result to a string or the
+    multimodal envelope and turns anything else into a ``tool_result_contract`` error, so a
+    handler payload that never crossed this boundary was reported as a failed call even when
+    the Graph read succeeded. Handlers keep returning the structured ``dict`` they are
+    contract-pinned on -- it is the *registration* boundary that owes the host a string, the
+    same way ``microsoft365_preflight`` already does.
+
+    ``json.dumps`` is the only transformation: the payload has already been through
+    :func:`microsoft365.results.normalize_result` (redaction, string bounds, depth and cycle
+    detection, binary artifacts outside string truncation), so nothing is re-bounded,
+    re-redacted or dropped here. A value that is already a string (an error payload a
+    dispatch path serialized itself) is handed over untouched.
+    """
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, default=str)
+
+
 def unavailable_handler(args, *, service: str) -> str:
     """Fallback for every operation that has no handler yet."""
     del args
@@ -308,7 +329,12 @@ def register_plugin(ctx) -> None:
             # Invariant 15: the settings travel with the call, so the executability gate inside
             # service_tool_handler is re-evaluated against this configuration and these final
             # arguments -- not against the payload an earlier hook saw.
-            return service_tool_handler(_service, args, settings=settings, dispatch_table=dispatch_table)
+            # The host's tool contract takes a string: a handler payload is serialized
+            # here, at the registration boundary, so a successful read is reported as a
+            # result instead of a ``tool_result_contract`` failure.
+            return tool_result(
+                service_tool_handler(_service, args, settings=settings, dispatch_table=dispatch_table)
+            )
 
         ctx.register_tool(
             name=f"microsoft365_{service}",

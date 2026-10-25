@@ -44,7 +44,7 @@ def test_registered_attachment_listing_returns_metadata_without_content(monkeypa
     ctx, calls = attachment_context(monkeypatch, adapter, action="list_attachments")
     args = {"action": "list_attachments", "user_id": BILLINGS_ID, "message_id": "message", "top": 1}
     assert ctx.hooks["pre_tool_call"](tool_name="microsoft365_outlook", args=args) is None
-    result = ctx.tools["microsoft365_outlook"]["handler"](args)
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"](args))
     assert result["status"] == "succeeded"
     assert (result["user_id"], result["message_id"]) == (BILLINGS_ID, "message")
     assert result["result"]["value"] == [{
@@ -74,7 +74,9 @@ class AttachmentDownloadAdapter(HandlerGraphAdapter):
         fields = request_information.query_parameters["%24select"]
         if fields == ["id", "name", "size", "contentType", "isInline"]:
             return self.metadata
-        assert fields == ["id", "size", "contentBytes"]
+        # ``contentBytes`` lives on the derived fileAttachment type: a bare name is a
+        # 400 from Graph on every real download.
+        assert fields == ["id", "size", "microsoft.graph.fileAttachment/contentBytes"]
         return self.content
 
 
@@ -92,7 +94,7 @@ def test_registered_download_preserves_file_attachment_bytes(monkeypatch):
     # the explicit base64 output choice: the default output is a local artifact,
     # which must not be exercised without a hermes-home isolation fixture
     args = {"action": "download_attachment", "user_id": BILLINGS_ID, "message_id": "message", "attachment_id": "attachment", "save_to_disk": False}
-    result = ctx.tools["microsoft365_outlook"]["handler"](args)
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"](args))
     assert result["status"] == "succeeded"
     assert (result["user_id"], result["message_id"]) == (BILLINGS_ID, "message")
     assert result["result"] == {
@@ -112,10 +114,10 @@ def test_registered_download_preserves_file_attachment_bytes(monkeypatch):
 def test_download_refuses_unsupported_or_unbounded_metadata_before_content(monkeypatch, metadata):
     adapter = AttachmentDownloadAdapter(metadata, FileAttachment(content_bytes=b"should-not-fetch"))
     ctx, _ = attachment_context(monkeypatch, adapter, action="download_attachment")
-    result = ctx.tools["microsoft365_outlook"]["handler"]({
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"]({
         "action": "download_attachment", "user_id": BILLINGS_ID, "message_id": "message", "attachment_id": "attachment",
         "save_to_disk": False,
-    })
+    }))
     result = json.loads(result) if isinstance(result, str) else result
     assert result["error"] in {"operation_not_implemented", "precondition_failed"}
     assert len(adapter.requests) == 1
@@ -127,10 +129,10 @@ def test_download_empty_file_or_size_mismatch(monkeypatch, data, declared):
         FileAttachment(id="attachment", size=declared), FileAttachment(id="attachment", size=declared, content_bytes=data),
     )
     ctx, _ = attachment_context(monkeypatch, adapter, action="download_attachment")
-    result = ctx.tools["microsoft365_outlook"]["handler"]({
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"]({
         "action": "download_attachment", "user_id": BILLINGS_ID, "message_id": "message", "attachment_id": "attachment",
         "save_to_disk": False,
-    })
+    }))
     result = json.loads(result) if isinstance(result, str) else result
     if declared == 0:
         assert result["result"]["content_base64"] == ""
@@ -150,7 +152,7 @@ def test_download_saves_unique_profile_artifacts_without_trusting_filename(monke
     )
     ctx, _ = attachment_context(monkeypatch, adapter, action="download_attachment")
     args = {"action": "download_attachment", "user_id": BILLINGS_ID, "message_id": "message", "attachment_id": "attachment", "save_to_disk": True}
-    records = [ctx.tools["microsoft365_outlook"]["handler"](args) for _ in range(2)]
+    records = [json.loads(ctx.tools["microsoft365_outlook"]["handler"](args)) for _ in range(2)]
     paths = []
     for result in records:
         assert isinstance(result, dict), result
@@ -178,9 +180,9 @@ def test_download_artifact_refuses_symlink_directory(monkeypatch, tmp_path):
     (tmp_path / "downloads").symlink_to(outside, target_is_directory=True)
     adapter = AttachmentDownloadAdapter(FileAttachment(id="attachment", size=1), FileAttachment(id="attachment", size=1, content_bytes=b"x"))
     ctx, _ = attachment_context(monkeypatch, adapter, action="download_attachment")
-    result = ctx.tools["microsoft365_outlook"]["handler"]({
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"]({
         "action": "download_attachment", "user_id": BILLINGS_ID, "message_id": "message", "attachment_id": "attachment", "save_to_disk": True,
-    })
+    }))
     result = json.loads(result) if isinstance(result, str) else result
     assert result["error"] == "configuration_error"
     assert list(outside.iterdir()) == []
@@ -227,9 +229,9 @@ def test_listing_follows_bounded_pagination_and_reports_truncation(monkeypatch):
         ("GET", f"/users/{BILLINGS_ID}/messages/message/attachments", (("$skiptoken", "2"),)): second,
     })
     ctx, _ = attachment_context(monkeypatch, adapter, action="list_attachments")
-    result = ctx.tools["microsoft365_outlook"]["handler"]({
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"]({
         "action": "list_attachments", "user_id": BILLINGS_ID, "message_id": "message", "top": 2,
-    })
+    }))
     assert result["status"] == "succeeded"
     assert [item["id"] for item in result["result"]["value"]] == ["a1", "a2"]
     assert result["continuation"] == {
@@ -250,9 +252,9 @@ def test_listing_mixed_attachment_types_report_type_and_exclude_content(monkeypa
         ("GET", f"/users/{BILLINGS_ID}/messages/message/attachments"): page,
     })
     ctx, _ = attachment_context(monkeypatch, adapter, action="list_attachments")
-    result = ctx.tools["microsoft365_outlook"]["handler"]({
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"]({
         "action": "list_attachments", "user_id": BILLINGS_ID, "message_id": "message",
-    })
+    }))
     assert result["status"] == "succeeded"
     items = result["result"]["value"]
     assert [item["attachment_type"] for item in items] == [
@@ -276,10 +278,10 @@ def test_download_refuses_metadata_id_mismatch_before_content(monkeypatch):
         FileAttachment(id="attachment", size=1, content_bytes=b"x"),
     )
     ctx, _ = attachment_context(monkeypatch, adapter, action="download_attachment")
-    result = ctx.tools["microsoft365_outlook"]["handler"]({
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"]({
         "action": "download_attachment", "user_id": BILLINGS_ID, "message_id": "message",
         "attachment_id": "attachment", "save_to_disk": True,
-    })
+    }))
     result = json.loads(result) if isinstance(result, str) else result
     assert result["error"] == "precondition_failed"
     assert len(adapter.requests) == 1
@@ -291,10 +293,10 @@ def test_download_refuses_content_id_mismatch(monkeypatch):
         FileAttachment(id="other-attachment", size=3, content_bytes=b"abc"),
     )
     ctx, _ = attachment_context(monkeypatch, adapter, action="download_attachment")
-    result = ctx.tools["microsoft365_outlook"]["handler"]({
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"]({
         "action": "download_attachment", "user_id": BILLINGS_ID, "message_id": "message",
         "attachment_id": "attachment", "save_to_disk": True,
-    })
+    }))
     result = json.loads(result) if isinstance(result, str) else result
     assert result["error"] == "precondition_failed"
     assert len(adapter.requests) == 2
@@ -305,10 +307,10 @@ def test_download_refuses_malformed_content_response(monkeypatch, tmp_path, cont
     _patched_home(monkeypatch, tmp_path)
     adapter = AttachmentDownloadAdapter(FileAttachment(id="attachment", size=1), content)
     ctx, _ = attachment_context(monkeypatch, adapter, action="download_attachment")
-    result = ctx.tools["microsoft365_outlook"]["handler"]({
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"]({
         "action": "download_attachment", "user_id": BILLINGS_ID, "message_id": "message",
         "attachment_id": "attachment",
-    })
+    }))
     result = json.loads(result) if isinstance(result, str) else result
     assert result["error"] in {"precondition_failed", "operation_not_implemented"}
     assert len(adapter.requests) == 2
@@ -322,10 +324,10 @@ def test_download_refuses_artifact_oversize_from_metadata_before_content(monkeyp
     )
     ctx, _ = attachment_context(monkeypatch, adapter, action="download_attachment")
     # default output choice (save_to_disk omitted) is the local artifact, capped at 10 MiB
-    result = ctx.tools["microsoft365_outlook"]["handler"]({
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"]({
         "action": "download_attachment", "user_id": BILLINGS_ID, "message_id": "message",
         "attachment_id": "attachment",
-    })
+    }))
     result = json.loads(result) if isinstance(result, str) else result
     assert result["error"] == "operation_not_implemented"
     assert len(adapter.requests) == 1
@@ -344,7 +346,7 @@ def test_download_default_output_is_local_artifact(monkeypatch, tmp_path):
         "message_id": "message", "attachment_id": "attachment",
     }
     assert "save_to_disk" not in args
-    result = ctx.tools["microsoft365_outlook"]["handler"](args)
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"](args))
     assert isinstance(result, dict), result
     record = result["result"]
     path = Path(record["path"])
@@ -372,10 +374,10 @@ def test_artifact_suffix_derives_from_mime_not_from_remote_name(
         FileAttachment(id="attachment", size=len(data), content_bytes=data),
     )
     ctx, _ = attachment_context(monkeypatch, adapter, action="download_attachment")
-    result = ctx.tools["microsoft365_outlook"]["handler"]({
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"]({
         "action": "download_attachment", "user_id": BILLINGS_ID,
         "message_id": "message", "attachment_id": "attachment", "save_to_disk": True,
-    })
+    }))
     assert isinstance(result, dict), result
     record = result["result"]
     path = Path(record["path"])
@@ -391,10 +393,10 @@ def test_download_empty_file_artifact(monkeypatch, tmp_path):
         FileAttachment(id="attachment", size=0, content_bytes=b""),
     )
     ctx, _ = attachment_context(monkeypatch, adapter, action="download_attachment")
-    result = ctx.tools["microsoft365_outlook"]["handler"]({
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"]({
         "action": "download_attachment", "user_id": BILLINGS_ID,
         "message_id": "message", "attachment_id": "attachment",
-    })
+    }))
     assert isinstance(result, dict), result
     record = result["result"]
     assert record["size"] == 0
@@ -424,10 +426,10 @@ def test_artifact_permissions_are_umask_independent(monkeypatch, tmp_path):
     ctx, _ = attachment_context(monkeypatch, adapter, action="download_attachment")
     original = os.umask(0o277)  # strips the owner write bit from every created mode
     try:
-        result = ctx.tools["microsoft365_outlook"]["handler"]({
+        result = json.loads(ctx.tools["microsoft365_outlook"]["handler"]({
             "action": "download_attachment", "user_id": BILLINGS_ID,
             "message_id": "message", "attachment_id": "attachment",
-        })
+        }))
     finally:
         os.umask(original)
     assert isinstance(result, dict), result
@@ -467,10 +469,10 @@ def test_artifact_closes_the_file_descriptor_when_fdopen_fails(monkeypatch, tmp_
         FileAttachment(id="attachment", size=1, content_bytes=b"x"),
     )
     ctx, _ = attachment_context(monkeypatch, adapter, action="download_attachment")
-    result = ctx.tools["microsoft365_outlook"]["handler"]({
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"]({
         "action": "download_attachment", "user_id": BILLINGS_ID,
         "message_id": "message", "attachment_id": "attachment", "save_to_disk": True,
-    })
+    }))
     result = json.loads(result) if isinstance(result, str) else result
     assert result["error"] == "configuration_error"
     # The descriptor opened for the artifact was closed on the failure path (no leak).
@@ -494,10 +496,10 @@ def test_artifact_refuses_group_writable_existing_directory(monkeypatch, tmp_pat
         FileAttachment(id="attachment", size=1, content_bytes=b"x"),
     )
     ctx, _ = attachment_context(monkeypatch, adapter, action="download_attachment")
-    result = ctx.tools["microsoft365_outlook"]["handler"]({
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"]({
         "action": "download_attachment", "user_id": BILLINGS_ID,
         "message_id": "message", "attachment_id": "attachment", "save_to_disk": True,
-    })
+    }))
     result = json.loads(result) if isinstance(result, str) else result
     assert result["error"] == "configuration_error"
     assert list(directory.iterdir()) == []  # nothing written into the unsafe directory
@@ -517,10 +519,10 @@ def test_artifact_fails_closed_under_umask_0777(monkeypatch, tmp_path):
     ctx, _ = attachment_context(monkeypatch, adapter, action="download_attachment")
     original = os.umask(0o777)
     try:
-        result = ctx.tools["microsoft365_outlook"]["handler"]({
+        result = json.loads(ctx.tools["microsoft365_outlook"]["handler"]({
             "action": "download_attachment", "user_id": BILLINGS_ID,
             "message_id": "message", "attachment_id": "attachment",
-        })
+        }))
     finally:
         os.umask(original)
     result = json.loads(result) if isinstance(result, str) else result
@@ -543,10 +545,10 @@ def test_artifact_cleanup_leaves_no_partial_file_on_post_write_failure(monkeypat
         FileAttachment(id="attachment", size=len(data), content_bytes=data),
     )
     ctx, _ = attachment_context(monkeypatch, adapter, action="download_attachment")
-    result = ctx.tools["microsoft365_outlook"]["handler"]({
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"]({
         "action": "download_attachment", "user_id": BILLINGS_ID,
         "message_id": "message", "attachment_id": "attachment",
-    })
+    }))
     result = json.loads(result) if isinstance(result, str) else result
     assert result["error"] == "configuration_error"
     directory = tmp_path / ARTIFACT_SUBDIR / ARTIFACT_DIR
@@ -566,10 +568,10 @@ def test_artifact_never_overwrites_an_existing_file(monkeypatch, tmp_path):
             FileAttachment(id="attachment", size=len(data), content_bytes=data),
         )
         ctx, _ = attachment_context(monkeypatch, adapter, action="download_attachment")
-        return ctx.tools["microsoft365_outlook"]["handler"]({
+        return json.loads(ctx.tools["microsoft365_outlook"]["handler"]({
             "action": "download_attachment", "user_id": BILLINGS_ID,
             "message_id": "message", "attachment_id": "attachment",
-        })
+        }))
 
     first = run(data_one)
     assert isinstance(first, dict), first
@@ -597,10 +599,10 @@ def test_artifact_refuses_pre_planted_symlink_file(monkeypatch, tmp_path):
         FileAttachment(id="attachment", size=len(data), content_bytes=data),
     )
     ctx, _ = attachment_context(monkeypatch, adapter, action="download_attachment")
-    result = ctx.tools["microsoft365_outlook"]["handler"]({
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"]({
         "action": "download_attachment", "user_id": BILLINGS_ID,
         "message_id": "message", "attachment_id": "attachment",
-    })
+    }))
     result = json.loads(result) if isinstance(result, str) else result
     assert result["error"] == "configuration_error"
     assert outside.read_bytes() == b"untouched"
@@ -644,10 +646,10 @@ def test_base64_download_at_the_supported_bound_survives_a_second_pass(monkeypat
         FileAttachment(id="attachment", size=len(data), content_bytes=data),
     )
     ctx, _ = attachment_context(monkeypatch, adapter, action="download_attachment")
-    result = ctx.tools["microsoft365_outlook"]["handler"]({
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"]({
         "action": "download_attachment", "user_id": BILLINGS_ID,
         "message_id": "message", "attachment_id": "attachment", "save_to_disk": False,
-    })
+    }))
     assert result["status"] == "succeeded"
     # A downstream normalization pass over the whole payload must not corrupt the bytes.
     normalized = results.normalize_result(result)
@@ -667,10 +669,10 @@ def test_base64_download_refuses_oversize_before_content_fetch(monkeypatch):
         FileAttachment(id="attachment", size=len(data), content_bytes=data),
     )
     ctx, _ = attachment_context(monkeypatch, adapter, action="download_attachment")
-    result = ctx.tools["microsoft365_outlook"]["handler"]({
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"]({
         "action": "download_attachment", "user_id": BILLINGS_ID,
         "message_id": "message", "attachment_id": "attachment", "save_to_disk": False,
-    })
+    }))
     result = json.loads(result) if isinstance(result, str) else result
     assert result["error"] == "operation_not_implemented"
     assert "save_to_disk" in result["message"]
@@ -691,10 +693,10 @@ def test_download_enforces_the_content_response_size_against_metadata_and_length
         FileAttachment(id="attachment", size=declared, content_bytes=data),
     )
     ctx, _ = attachment_context(monkeypatch, adapter, action="download_attachment")
-    result = ctx.tools["microsoft365_outlook"]["handler"]({
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"]({
         "action": "download_attachment", "user_id": BILLINGS_ID,
         "message_id": "message", "attachment_id": "attachment", "save_to_disk": False,
-    })
+    }))
     result = json.loads(result) if isinstance(result, str) else result
     assert result["error"] == "precondition_failed"
     assert len(adapter.requests) == 2  # the mismatch is detected in the content response

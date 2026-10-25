@@ -23,6 +23,7 @@ Action-specific rules this module owns (what the shared argument contract cannot
   ``save_to_sent_items`` is sent only when the caller supplied it, so the service default is
   never asserted on the caller's behalf.
 """
+
 from __future__ import annotations
 
 import re
@@ -37,9 +38,18 @@ from msgraph.generated.users.item.send_mail.send_mail_post_request_body import (
 )
 
 from ..execution import execute_request
+from ..group_mail import (
+    UNSUPPORTED_SEARCH_ARGUMENTS,
+    post_builder,
+    project_post,
+    search_payload as group_search_payload,
+    thread_builder,
+)
+from ..mailbox import GROUP_MAILBOX, route
 from ..paging import paginate
 from ..results import normalize_result
 from . import (
+    MAX_LIMIT,
     HandlerContext,
     collection_payload,
     handler,
@@ -105,15 +115,29 @@ def search_filter(arguments: Mapping, *, operation: str) -> str | None:
     conditions = []
     if query is not None:
         if not isinstance(query, str) or not query.strip():
-            refuse("validation_error", f"{operation}: query must be a non-blank search string")
+            refuse(
+                "validation_error",
+                f"{operation}: query must be a non-blank search string",
+            )
         conditions.append("contains(subject,'" + query.replace("'", "''") + "')")
     if "has_attachments" in arguments:
-        conditions.append("hasAttachments eq " + str(arguments["has_attachments"]).lower())
+        conditions.append(
+            "hasAttachments eq " + str(arguments["has_attachments"]).lower()
+        )
     if arguments.get("sender") is not None:
-        conditions.append("from/emailAddress/address eq '" + arguments["sender"].replace("'", "''") + "'")
+        conditions.append(
+            "from/emailAddress/address eq '"
+            + arguments["sender"].replace("'", "''")
+            + "'"
+        )
     for name, comparison in (("received_after", "ge"), ("received_before", "lt")):
         if name in arguments:
-            stamp = datetime.fromisoformat(arguments[name]).astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            stamp = (
+                datetime.fromisoformat(arguments[name])
+                .astimezone(timezone.utc)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
             conditions.append(f"receivedDateTime {comparison} {stamp}")
     return " and ".join(conditions) or None
 
@@ -206,8 +230,14 @@ def message_model(arguments: Mapping, *, operation: str, require_body: bool) -> 
         )
     return Message(
         subject=subject,
-        body=ItemBody(content_type=BodyType.Text, content=content) if content is not None else None,
-        to_recipients=recipients(arguments, "to_recipients", operation=operation, required=True),
+        body=(
+            ItemBody(content_type=BodyType.Text, content=content)
+            if content is not None
+            else None
+        ),
+        to_recipients=recipients(
+            arguments, "to_recipients", operation=operation, required=True
+        ),
         cc_recipients=recipients(arguments, "cc_recipients", operation=operation),
         bcc_recipients=recipients(arguments, "bcc_recipients", operation=operation),
     )
@@ -218,40 +248,146 @@ def message_model(arguments: Mapping, *, operation: str, require_body: bool) -> 
 
 @handler("outlook", "search")
 def search(arguments: Mapping, context: HandlerContext) -> dict:
-    """List one mailbox's messages, bounded by the caller's item budget."""
+    """List one mailbox's messages, bounded by the caller's item budget.
+
+    A group mailbox lists conversation threads instead of messages, on its own Graph route;
+    the branch is taken on the *resolved kind* of the allowlisted mailbox, after the client
+    exists and before any message request is built.
+    """
     user_id = identifier(arguments, "user_id", operation=SEARCH)
+    limit = item_budget(arguments, operation=SEARCH)
     filters = search_filter(arguments, operation=SEARCH)
     # A caller ``select`` is honored verbatim; with none supplied the search selects the
     # compact candidate metadata instead of pulling every candidate's complete body.
     fields = select(arguments, operation=SEARCH) or DEFAULT_MESSAGE_SELECT
-    limit = item_budget(arguments, operation=SEARCH)
-
     client, adapter = open_graph_client(context)
-    builder = client.users.by_user_id(user_id).messages
-    configuration = typed_configuration(builder, top=limit, filter=filters, select=fields)
+
+    def user_route() -> dict:
+        builder = client.users.by_user_id(user_id).messages
+        configuration = typed_configuration(
+            builder, top=limit, filter=filters, select=fields
+        )
+        paged = paginate(
+            builder, adapter=adapter, limit=limit, configuration=configuration
+        )
+        # Project the compact candidate metadata from the *actual* generated items, honoring
+        # the exact select that reached the wire (a caller select never injects an unrequested
+        # field), and run it through the shared normalization so every value is redacted and
+        # bounded. The continuation and the observed count are the paginator's own, so the cap
+        # stays truthful.
+        projected = [
+            normalize_result(_project_message(item, fields)) for item in paged.items
+        ]
+        result = dict(paged.payload)
+        result["value"] = projected
+        return {
+            **collection_payload(SEARCH, paged),
+            "result": result,
+            "user_id": user_id,
+        }
+
+    return route(
+        user_id,
+        client=client,
+        adapter=adapter,
+        settings=context.settings,
+        arguments=arguments,
+        user_route=user_route,
+        group_route=lambda: _group_search(
+            arguments, client=client, adapter=adapter, mailbox_id=user_id, limit=limit
+        ),
+    )
+
+
+def _group_search(
+    arguments: Mapping, *, client, adapter, mailbox_id: str, limit: int
+) -> dict:
+    """The group-mailbox branch of :func:`search`: a bounded conversation listing.
+
+    The thread collection accepts ``$top`` and nothing else that narrows a listing, so an
+    argument it cannot express is refused here (never silently dropped) and the ones it can
+    only answer locally are applied after the bounded page, with the result stating that it
+    filtered the page rather than the mailbox.
+    """
+    for name, reason in UNSUPPORTED_SEARCH_ARGUMENTS.items():
+        if arguments.get(name) is not None:
+            refuse("validation_error", f"{SEARCH}: {reason}")
+    builder = thread_builder(client, mailbox_id)
+    configuration = typed_configuration(builder, top=limit)
     paged = paginate(builder, adapter=adapter, limit=limit, configuration=configuration)
-    # Project the compact candidate metadata from the *actual* generated items, honoring the
-    # exact select that reached the wire (a caller select never injects an unrequested field),
-    # and run it through the shared normalization so every value is redacted and bounded. The
-    # continuation and the observed count are the paginator's own, so the cap stays truthful.
-    projected = [normalize_result(_project_message(item, fields)) for item in paged.items]
+    return {
+        **collection_payload(SEARCH, paged),
+        "result": group_search_payload(paged, arguments),
+        "user_id": mailbox_id,
+        "mailbox_type": GROUP_MAILBOX,
+    }
+
+
+def _group_read(
+    arguments: Mapping, *, client, adapter, mailbox_id: str, thread_id: str
+) -> dict:
+    """The group-mailbox branch of :func:`read`: the posts of one conversation thread."""
+    include_body = True
+    fields = select(arguments, operation=READ)
+    if fields is not None:
+        include_body = any(str(name).lower() == "body" for name in fields)
+    builder = post_builder(client, mailbox_id, thread_id)
+    configuration = typed_configuration(builder, top=MAX_LIMIT)
+    paged = paginate(
+        builder, adapter=adapter, limit=MAX_LIMIT, configuration=configuration
+    )
     result = dict(paged.payload)
-    result["value"] = projected
-    return {**collection_payload(SEARCH, paged), "result": result, "user_id": user_id}
+    result["value"] = [
+        normalize_result(project_post(post, include_body=include_body))
+        for post in paged.items
+    ]
+    result["container"] = GROUP_MAILBOX
+    result["unit"] = "post"
+    return {
+        **collection_payload(READ, paged),
+        "result": result,
+        "user_id": mailbox_id,
+        "message_id": thread_id,
+        "mailbox_type": GROUP_MAILBOX,
+    }
 
 
 @handler("outlook", "read")
 def read(arguments: Mapping, context: HandlerContext) -> dict:
-    """Read one message, with the caller's ``$select`` and nothing else."""
+    """Read one message, with the caller's ``$select`` and nothing else.
+
+    On a group mailbox ``message_id`` names the conversation thread a listing returned, and
+    the read answers with the posts inside it -- the messages of that conversation.
+    """
     user_id = identifier(arguments, "user_id", operation=READ)
     message_id = identifier(arguments, "message_id", operation=READ)
-    fields = select(arguments, operation=READ)
 
+    fields = select(arguments, operation=READ)
     client, adapter = open_graph_client(context)
-    builder = client.users.by_user_id(user_id).messages.by_message_id(message_id)
-    configuration = typed_configuration(builder, select=fields)
-    response = execute_request(builder, method="GET", configuration=configuration, adapter=adapter)
-    return success_payload(READ, response)
+
+    def user_route() -> dict:
+        builder = client.users.by_user_id(user_id).messages.by_message_id(message_id)
+        configuration = typed_configuration(builder, select=fields)
+        response = execute_request(
+            builder, method="GET", configuration=configuration, adapter=adapter
+        )
+        return success_payload(READ, response)
+
+    return route(
+        user_id,
+        client=client,
+        adapter=adapter,
+        settings=context.settings,
+        arguments=arguments,
+        user_route=user_route,
+        group_route=lambda: _group_read(
+            arguments,
+            client=client,
+            adapter=adapter,
+            mailbox_id=user_id,
+            thread_id=message_id,
+        ),
+    )
 
 
 # ---------------------------------------------------------------- writes
@@ -287,7 +423,10 @@ def send(arguments: Mapping, context: HandlerContext) -> dict:
     """Send a composed message, or send a draft that already exists."""
     user_id = identifier(arguments, "user_id", operation=SEND)
     message_id = arguments.get("message_id")
-    composed = arguments.get("subject") is not None or arguments.get("to_recipients") is not None
+    composed = (
+        arguments.get("subject") is not None
+        or arguments.get("to_recipients") is not None
+    )
     if message_id is not None and composed:
         refuse(
             "validation_error",
@@ -318,6 +457,8 @@ def send(arguments: Mapping, context: HandlerContext) -> dict:
 
     client, adapter = open_graph_client(context)
     builder = client.users.by_user_id(user_id).send_mail
-    request_body = SendMailPostRequestBody(message=model, save_to_sent_items=save_to_sent_items)
+    request_body = SendMailPostRequestBody(
+        message=model, save_to_sent_items=save_to_sent_items
+    )
     execute_request(builder, method="POST", body=request_body, adapter=adapter)
     return success_payload(SEND, {"accepted": True, "form": "composed"})

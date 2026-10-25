@@ -52,7 +52,7 @@ def test_registered_invoice_search_composes_filters_without_dropping_false(monke
         "sender": "o'hara@example.test", "received_after": "2026-10-01T00:00:00Z", "received_before": "2026-11-01T00:00:00Z", "top": 20,
     }
     assert ctx.hooks["pre_tool_call"](tool_name="microsoft365_outlook", args=args) is None
-    result = ctx.tools["microsoft365_outlook"]["handler"](args)
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"](args))
     assert result["status"] == "succeeded"
     assert result["user_id"] == BILLINGS_ID
     assert result["result"]["value"][0]["id"] == "message"
@@ -108,7 +108,7 @@ def test_default_search_selects_compact_candidate_metadata_and_never_the_body(mo
     adapter = HandlerGraphAdapter({("GET", f"/users/{BILLINGS_ID}/messages"): page})
     ctx = _search_context(monkeypatch, adapter)
     args = {"action": "search", "user_id": BILLINGS_ID, "query": "facture", "top": 20}
-    result = ctx.tools["microsoft365_outlook"]["handler"](args)
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"](args))
 
     assert result["status"] == "succeeded"
     selected = adapter.requests[0].query_parameters["%24select"]
@@ -128,9 +128,9 @@ def test_default_search_reports_the_source_mailbox_as_provenance(monkeypatch):
     adapter = HandlerGraphAdapter({("GET", f"/users/{BILLINGS_ID}/messages"): page})
     ctx = _search_context(monkeypatch, adapter)
 
-    result = ctx.tools["microsoft365_outlook"]["handler"](
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"](
         {"action": "search", "user_id": BILLINGS_ID, "top": 20}
-    )
+    ))
 
     assert result["user_id"] == BILLINGS_ID
     assert result["result"]["value"][0]["id"] == "message"
@@ -143,7 +143,7 @@ def test_caller_select_overrides_the_compact_default(monkeypatch):
     ctx = _search_context(monkeypatch, adapter)
     args = {"action": "search", "user_id": BILLINGS_ID, "select": ["id", "subject", "body"], "top": 20}
 
-    result = ctx.tools["microsoft365_outlook"]["handler"](args)
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"](args))
 
     assert result["status"] == "succeeded"
     assert list(adapter.requests[0].query_parameters["%24select"]) == ["id", "subject", "body"]
@@ -162,9 +162,9 @@ def test_registered_search_result_carries_the_compact_metadata_it_selected(monke
     adapter = HandlerGraphAdapter({("GET", f"/users/{BILLINGS_ID}/messages"): page})
     ctx = _search_context(monkeypatch, adapter)
 
-    result = ctx.tools["microsoft365_outlook"]["handler"](
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"](
         {"action": "search", "user_id": BILLINGS_ID, "query": "facture", "top": 20}
-    )
+    ))
 
     assert result["status"] == "succeeded"
     # mailbox provenance: the candidate is never orphaned from its source mailbox
@@ -190,9 +190,9 @@ def test_registered_search_caller_select_injects_no_unrequested_metadata(monkeyp
     adapter = HandlerGraphAdapter({("GET", f"/users/{BILLINGS_ID}/messages"): page})
     ctx = _search_context(monkeypatch, adapter)
 
-    result = ctx.tools["microsoft365_outlook"]["handler"](
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"](
         {"action": "search", "user_id": BILLINGS_ID, "select": ["id", "subject"], "top": 20}
-    )
+    ))
 
     assert result["status"] == "succeeded"
     # the request selects exactly what was asked
@@ -234,9 +234,9 @@ def test_registered_search_second_page_preserves_dates_and_senders_with_truthful
 
     # the caller budget (3) cuts across the page boundary: page one is fully taken, then the
     # second page is followed and one of its two candidates is taken before the budget is met.
-    result = ctx.tools["microsoft365_outlook"]["handler"](
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"](
         {"action": "search", "user_id": BILLINGS_ID, "query": "facture", "top": 3}
-    )
+    ))
 
     assert result["status"] == "succeeded"
     assert [item["id"] for item in result["result"]["value"]] == ["AAMkAD1", "AAMkAD2", "AAMkAD3"]
@@ -263,9 +263,9 @@ def test_registered_search_projects_sender_as_a_usable_email_name(monkeypatch):
     adapter = HandlerGraphAdapter({("GET", f"/users/{BILLINGS_ID}/messages"): page})
     ctx = _search_context(monkeypatch, adapter)
 
-    result = ctx.tools["microsoft365_outlook"]["handler"](
+    result = json.loads(ctx.tools["microsoft365_outlook"]["handler"](
         {"action": "search", "user_id": BILLINGS_ID, "query": "facture", "select": ["id", "sender"], "top": 20}
-    )
+    ))
 
     assert result["status"] == "succeeded"
     values = result["result"]["value"]

@@ -1433,6 +1433,9 @@ ENDPOINT_CASE_ARGUMENTS: dict[tuple[str, str], dict] = {
     ("build_collection_request_information", "outlook_messages"): {"query": "invoice"},
     ("build_collection_request_information", "calendar_events"): {"query": "planning"},
     ("build_item_request_information", "outlook_read"): {},
+    ("build_collection_request_information", "outlook_group_threads"): {},
+    ("build_collection_request_information", "outlook_group_posts"): {},
+    ("build_collection_request_information", "outlook_group_post_attachments"): {},
     ("build_write_request_information", "outlook_create_draft"): {
         "subject": "Weekly report",
         "content": "Body text",
@@ -1514,7 +1517,10 @@ def test_the_declared_messaging_endpoints_are_the_ones_the_sdk_contract_builds()
             arguments = dict(
                 ENDPOINT_CASE_ARGUMENTS[(endpoint.contract_call, endpoint.contract_case)]
             )
-            for name in endpoint.required_identifiers:
+            # Only the path placeholders are rendered: an identifier the endpoint needs
+            # without putting it in the URL (the group download's attachment_id) is not a
+            # segment and has nothing to substitute.
+            for name in endpoint.path_identifiers:
                 arguments[name] = ENDPOINT_IDENTIFIERS[name]
             request = getattr(sdk_contract, endpoint.contract_call)(
                 graph_client(HandlerGraphAdapter()), endpoint.contract_case, **arguments

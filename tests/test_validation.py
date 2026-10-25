@@ -374,10 +374,10 @@ def test_application_roles_are_pinned_per_operation():
     from microsoft365.contract import OPERATION_REGISTRY
 
     assert {key: definition.app.permissions for key, definition in OPERATION_REGISTRY.items()} == {
-        "outlook.list_attachments": ("Mail.Read",),
-        "outlook.download_attachment": ("Mail.Read",),
-        "outlook.search": ("Mail.Read",),
-        "outlook.read": ("Mail.Read",),
+        "outlook.list_attachments": ("Mail.Read", "Group.Read.All"),
+        "outlook.download_attachment": ("Mail.Read", "Group.Read.All"),
+        "outlook.search": ("Mail.Read", "Group.Read.All"),
+        "outlook.read": ("Mail.Read", "Group.Read.All"),
         "outlook.create_draft": ("Mail.ReadWrite",),
         "outlook.send": ("Mail.Send",),
         "sharepoint.search": ("Sites.Read.All",),
@@ -413,10 +413,10 @@ def test_delegated_scopes_are_recorded_independently_of_the_application_roles():
     from microsoft365.contract import OPERATION_REGISTRY
 
     expected = {
-        "outlook.list_attachments": ("Mail.Read",),
-        "outlook.download_attachment": ("Mail.Read",),
-        "outlook.search": ("Mail.Read",),
-        "outlook.read": ("Mail.Read",),
+        "outlook.list_attachments": ("Mail.Read", "Group.Read.All"),
+        "outlook.download_attachment": ("Mail.Read", "Group.Read.All"),
+        "outlook.search": ("Mail.Read", "Group.Read.All"),
+        "outlook.read": ("Mail.Read", "Group.Read.All"),
         "outlook.create_draft": ("Mail.ReadWrite",),
         "outlook.send": ("Mail.Send",),
         "sharepoint.search": ("Sites.Read.All",),
@@ -544,7 +544,7 @@ def test_admin_consent_and_remote_verification_are_derived_and_fail_closed():
         OperationDefinition(
             service="outlook",
             operation="search",
-            permissions=("Mail.Read",),
+            permissions=("Mail.Read", "Group.Read.All"),
             write=False,
             remote_verification="probably",
         )
@@ -552,7 +552,7 @@ def test_admin_consent_and_remote_verification_are_derived_and_fail_closed():
         OperationDefinition(
             service="outlook",
             operation="search",
-            permissions=("Mail.Read",),
+            permissions=("Mail.Read", "Group.Read.All"),
             write=False,
             remote_verification="verified",
         )
@@ -1369,7 +1369,7 @@ def test_a_valid_payload_does_reach_the_probe_so_the_guard_is_what_blocks(monkey
     ctx = _registered(monkeypatch=monkeypatch)
 
     with pytest.raises(AssertionError, match="get_secret must not be reached"):
-        ctx.tools["microsoft365_outlook"]["handler"](dict(VALID_PAYLOADS["outlook.search"]))
+        json.loads(ctx.tools["microsoft365_outlook"]["handler"](dict(VALID_PAYLOADS["outlook.search"])))
 
     assert record == ["get_secret"]
 

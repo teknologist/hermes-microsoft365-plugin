@@ -92,6 +92,34 @@ def build_collection_request_information(
             select=list(OUTLOOK_MESSAGES_DEFAULT_SELECT),
             filter=f"contains(subject,'{_odata_literal(query)}')",
         )
+    # ------------------------------------------------------------------ group mailboxes
+    #
+    # A Microsoft 365 group has an Exchange mailbox that is *not* addressable through
+    # ``/users/{id}``: its mail lives in conversation threads and the posts inside them
+    # (``GET /users/{group}`` is a directory read an application identity is refused, and the
+    # group's SMTP address is not a user principal). The three rows below are the group
+    # counterparts of ``outlook_messages`` and ``outlook_attachments``:
+    #
+    # * ``outlook_group_threads``   -- the mailbox listing (one entry per conversation);
+    # * ``outlook_group_posts``     -- the messages of one conversation;
+    # * ``outlook_group_post_attachments`` -- the same posts with ``$expand=attachments``,
+    #   which is the only route that works: the per-post ``/attachments`` collection is
+    #   refused by Exchange for an application identity, while the expanded navigation
+    #   property carries both the metadata and ``contentBytes``.
+    #
+    # The identifier names are the endpoint rows' own -- ``user_id`` names the mailbox and
+    # ``message_id`` the unit a listing returns, which for a group is the conversation
+    # thread -- so the declared path and this builder stay pinned to each other.
+    if case == "outlook_group_threads":
+        builder = client.groups.by_group_id(_required(user_id, "user_id")).threads
+        return _request(builder, top=bounded)
+    if case in ("outlook_group_posts", "outlook_group_post_attachments"):
+        builder = client.groups.by_group_id(
+            _required(user_id, "user_id")
+        ).threads.by_conversation_thread_id(_required(message_id, "message_id")).posts
+        if case == "outlook_group_posts":
+            return _request(builder, top=bounded)
+        return _request(builder, top=bounded, expand=["attachments"])
     if case == "calendar_events":
         builder = client.users.by_user_id(_required(user_id, "user_id")).calendar.events
         return _request(builder, top=bounded, filter=f"contains(subject,'{_odata_literal(query)}')")

@@ -143,7 +143,7 @@ def test_application_support_status_is_recorded_per_operation():
     from microsoft365.contract import OPERATION_REGISTRY, TODO_WRITE_OPERATIONS
 
     assert OPERATION_REGISTRY["outlook.search"].app.status == "supported"
-    assert OPERATION_REGISTRY["outlook.search"].app.permissions == ("Mail.Read",)
+    assert OPERATION_REGISTRY["outlook.search"].app.permissions == ("Mail.Read", "Group.Read.All")
     assert OPERATION_REGISTRY["teams.send_messages"].app.status == "unsupported_auth_mode"
     assert OPERATION_REGISTRY["teams.send_messages"].app.permissions == ()
 

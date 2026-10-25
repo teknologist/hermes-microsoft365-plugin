@@ -679,6 +679,13 @@ class MessagingEndpoint:
     ``path_identifiers``: the identifier set of the *operation* is the intersection of its
     rows, so the operation requires only ``user_id`` while ``message_id`` stays optional, and
     the union keeps ``message_id`` visible instead of silently unlisted.
+
+    ``path_identifiers`` are exactly the placeholders of ``path_template`` -- that is what
+    makes the rendered path checkable against the declaration. ``selected_identifiers`` are
+    identifiers the call still cannot run without even though no URL segment carries them:
+    the group-mailbox download names its ``attachment_id`` inside the conversation it reads,
+    not in the path, and recording it here keeps it a *required* identifier of the operation
+    instead of quietly becoming optional.
     """
 
     service: str
@@ -687,6 +694,7 @@ class MessagingEndpoint:
     path_template: str
     container: str
     path_identifiers: tuple[str, ...] = ()
+    selected_identifiers: tuple[str, ...] = ()
     application_permissions: tuple[str, ...] = ()
     claim_status: str = "documented_not_verified"
     contract_call: str = ""
@@ -705,13 +713,26 @@ class MessagingEndpoint:
 
     @property
     def required_identifiers(self) -> tuple[str, ...]:
-        """Identifiers this endpoint cannot be called without."""
-        return self.path_identifiers
+        """Identifiers this endpoint cannot be called without, path segment or not."""
+        return self.path_identifiers + self.selected_identifiers
 
 
-#: The single container kind of both services: one user's mailbox or calendar, addressed by
-#: ``user_id``. Neither service has a tenant-wide route here.
+#: The mailbox/calendar container of a *user* -- a personal mailbox or a shared mailbox, both
+#: addressed by ``/users/{user_id}``. Neither service has a tenant-wide route here.
 MESSAGING_CONTAINER = "user"
+
+#: The mailbox container of a Microsoft 365 **group**, addressed by ``/groups/{user_id}``.
+#:
+#: A group mailbox is a different resource, not a differently-named user: ``/users/{group}``
+#: is a directory read that an application identity is refused, and the group's SMTP address
+#: is not a user principal, so the user route can only ever answer ``not_found`` for one. Its
+#: mail is a conversation tree -- threads, and the posts inside them -- which is why the
+#: Outlook reads carry a second endpoint row instead of a second operation: ``user_id`` names
+#: the mailbox whatever its kind, and for a group ``message_id`` names the **conversation
+#: thread** (the unit a group mailbox listing returns), exactly as it names the message a user
+#: mailbox listing returns. The identifier set of every read is therefore identical on both
+#: routes, so no argument, schema or allowlist rule changes with the kind of mailbox.
+GROUP_MESSAGING_CONTAINER = "group"
 
 OUTLOOK_ENDPOINTS: tuple[MessagingEndpoint, ...] = (
     MessagingEndpoint(
@@ -758,6 +779,58 @@ OUTLOOK_ENDPOINTS: tuple[MessagingEndpoint, ...] = (
         contract_call="build_item_request_information",
         contract_case="outlook_read",
         documentation_page="https://learn.microsoft.com/en-us/graph/api/message-get",
+    ),
+    # ---------------------------------------------------------------- group mailbox routes
+    MessagingEndpoint(
+        service="outlook",
+        operation="search",
+        method="GET",
+        path_template="/groups/{user_id}/threads",
+        container=GROUP_MESSAGING_CONTAINER,
+        path_identifiers=("user_id",),
+        application_permissions=("Group.Read.All",),
+        contract_call="build_collection_request_information",
+        contract_case="outlook_group_threads",
+        documentation_page="https://learn.microsoft.com/en-us/graph/api/group-list-threads",
+    ),
+    MessagingEndpoint(
+        service="outlook",
+        operation="read",
+        method="GET",
+        path_template="/groups/{user_id}/threads/{message_id}/posts",
+        container=GROUP_MESSAGING_CONTAINER,
+        path_identifiers=("user_id", "message_id"),
+        application_permissions=("Group.Read.All",),
+        contract_call="build_collection_request_information",
+        contract_case="outlook_group_posts",
+        documentation_page="https://learn.microsoft.com/en-us/graph/api/conversationthread-list-posts",
+    ),
+    MessagingEndpoint(
+        service="outlook",
+        operation="list_attachments",
+        method="GET",
+        path_template="/groups/{user_id}/threads/{message_id}/posts",
+        container=GROUP_MESSAGING_CONTAINER,
+        path_identifiers=("user_id", "message_id"),
+        application_permissions=("Group.Read.All",),
+        contract_call="build_collection_request_information",
+        contract_case="outlook_group_post_attachments",
+        documentation_page="https://learn.microsoft.com/en-us/graph/api/conversationthread-list-posts",
+    ),
+    MessagingEndpoint(
+        service="outlook",
+        operation="download_attachment",
+        method="GET",
+        path_template="/groups/{user_id}/threads/{message_id}/posts",
+        container=GROUP_MESSAGING_CONTAINER,
+        path_identifiers=("user_id", "message_id"),
+        # No URL segment names the attachment on this route: the conversation is read and
+        # the named attachment is located inside it, so the identifier is still required.
+        selected_identifiers=("attachment_id",),
+        application_permissions=("Group.Read.All",),
+        contract_call="build_collection_request_information",
+        contract_case="outlook_group_post_attachments",
+        documentation_page="https://learn.microsoft.com/en-us/graph/api/conversationthread-list-posts",
     ),
     MessagingEndpoint(
         service="outlook",
@@ -1210,10 +1283,13 @@ NO_PERMISSION_CONSENT_BASIS = (
 #: does not make delegated authentication available, and no row of the application map is
 #: used to build them.
 _DELEGATED_SCOPES: dict[str, tuple[str, ...]] = {
-    "outlook.download_attachment": ("Mail.Read",),
-    "outlook.list_attachments": ("Mail.Read",),
-    "outlook.search": ("Mail.Read",),
-    "outlook.read": ("Mail.Read",),
+    # The four Outlook reads each have two routes -- a user mailbox and a group mailbox --
+    # so each records the scope of both; a delegated implementation (WP14) would need them
+    # together to read every mailbox kind this plugin addresses.
+    "outlook.download_attachment": ("Mail.Read", "Group.Read.All"),
+    "outlook.list_attachments": ("Mail.Read", "Group.Read.All"),
+    "outlook.search": ("Mail.Read", "Group.Read.All"),
+    "outlook.read": ("Mail.Read", "Group.Read.All"),
     "outlook.create_draft": ("Mail.ReadWrite",),
     "outlook.send": ("Mail.Send",),
     "sharepoint.search": ("Sites.Read.All",),

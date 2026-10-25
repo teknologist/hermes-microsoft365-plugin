@@ -43,7 +43,7 @@ def test_registered_outlook_allowlist_overrides_single_user_before_client(monkey
     for mailbox in (MAIN_ID, BILLINGS_ID):
         args = {"action": "search", "user_id": mailbox}
         assert hook(tool_name="microsoft365_outlook", args=args) is None
-        result = handler(args)
+        result = json.loads(handler(args))
         assert result["status"] == "succeeded"
         assert result["result"]["value"] == []
     assert len(clients) == 2

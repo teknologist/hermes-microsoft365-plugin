@@ -365,6 +365,15 @@ PLANNER_PATCH_FIELDS: Mapping[str, str] = {
     "priority": "integer",
 }
 
+#: The optional mailbox-kind override of every Outlook read.
+#:
+#: ``user`` is the ``/users/{id}`` route a personal **or shared** mailbox answers on; ``group``
+#: is the ``/groups/{id}`` conversation route a Microsoft 365 group mailbox answers on. Left
+#: out, the kind is resolved once from the directory (``microsoft365.mailbox``). It is an
+#: explicit escape hatch, never a widening: ``user_id`` still has to pass the mailbox
+#: allowlist, and naming a kind cannot reach a mailbox the allowlist does not contain.
+_MAILBOX_TYPE = _spec("mailbox_type", "enum", values=("user", "group"))
+
 _RECIPIENTS = _spec("to_recipients", "recipients", required=True)
 _ITEM_FORMS = (("item_id",), ("item_path",))
 
@@ -396,6 +405,7 @@ def _build_contracts() -> dict[str, OperationArguments]:
             key="outlook.search",
             properties=(
                 _spec("user_id", "identifier", required=True),
+                _MAILBOX_TYPE,
                 _spec("query", "text"),
                 _spec("filter", "text"),
                 _spec("has_attachments", "boolean"),
@@ -411,6 +421,7 @@ def _build_contracts() -> dict[str, OperationArguments]:
             properties=(
                 _spec("user_id", "identifier", required=True),
                 _spec("message_id", "identifier", required=True),
+                _MAILBOX_TYPE,
                 _integer("top", 1, 100),
             ),
         ),
@@ -420,6 +431,7 @@ def _build_contracts() -> dict[str, OperationArguments]:
                 _spec("user_id", "identifier", required=True),
                 _spec("message_id", "identifier", required=True),
                 _spec("attachment_id", "identifier", required=True),
+                _MAILBOX_TYPE,
                 _spec("save_to_disk", "boolean"),
             ),
         ),
@@ -428,6 +440,7 @@ def _build_contracts() -> dict[str, OperationArguments]:
             properties=(
                 _spec("user_id", "identifier", required=True),
                 _spec("message_id", "identifier", required=True),
+                _MAILBOX_TYPE,
                 _spec("select", "select"),
             ),
         ),
