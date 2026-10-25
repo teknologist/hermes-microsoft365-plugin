@@ -34,7 +34,7 @@ except ImportError:  # pragma: no cover - exercised only without Hermes installe
         _LOCAL_CONFIG.update(deepcopy(config))
 
 
-_ALLOWED_FIELDS = frozenset({"tenant_id", "client_id", "user_id", "authentication_mode", "capabilities"})
+_ALLOWED_FIELDS = frozenset({"tenant_id", "client_id", "user_id", "authentication_mode", "capabilities", "allowed_mailbox_ids"})
 _PLUGIN_PATH = ("plugins", "entries", "microsoft365", "settings")
 
 
@@ -85,7 +85,7 @@ def _strict_settings(body: Any) -> Settings:
     unknown = set(body) - _ALLOWED_FIELDS
     if unknown:
         raise ConfigurationError("unknown configuration field")
-    missing = _ALLOWED_FIELDS - set(body)
+    missing = (_ALLOWED_FIELDS - {"allowed_mailbox_ids"}) - set(body)
     if missing:
         raise ConfigurationError("configuration fields are required")
     for name in ("tenant_id", "client_id", "user_id", "authentication_mode"):
@@ -93,6 +93,11 @@ def _strict_settings(body: Any) -> Settings:
             raise ConfigurationError("configuration values have invalid types")
     if type(body["capabilities"]) is not dict:
         raise ConfigurationError("capabilities must be a mapping")
+    if "allowed_mailbox_ids" not in body:
+        current, errors = _settings_from_config()
+        if errors or current is None:
+            raise ConfigurationError("existing configuration is invalid")
+        body = {**body, "allowed_mailbox_ids": current.allowed_mailbox_ids}
     return Settings.from_mapping(body)
 
 
@@ -107,6 +112,8 @@ def _save_settings(settings: Settings) -> None:
         "authentication_mode": settings.authentication_mode,
         "capabilities": {service: dict(ops) for service, ops in settings.capabilities.items()},
     }
+    if settings.allowed_mailbox_ids:
+        settings_dict["allowed_mailbox_ids"] = list(settings.allowed_mailbox_ids)
     node = config
     for key in _PLUGIN_PATH[:-1]:
         existing = node.get(key)

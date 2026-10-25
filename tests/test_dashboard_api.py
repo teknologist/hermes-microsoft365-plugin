@@ -56,7 +56,7 @@ def test_capabilities_contains_every_registry_operation(client):
     assert response.status_code == 200
     rows = response.json()["operations"]
     assert {row["key"] for row in rows} == set(OPERATION_REGISTRY)
-    assert len(rows) == sum(map(len, OPERATIONS.values())) == 30
+    assert len(rows) == sum(map(len, OPERATIONS.values())) == 32
 
 
 def test_preflight_is_local_and_sanitized(monkeypatch):
@@ -71,3 +71,31 @@ def test_preflight_is_local_and_sanitized(monkeypatch):
     assert response.json()["remote_verification"] == "not_tested"
     assert sentinel not in response.text
     assert called
+
+
+def test_configuration_update_preserves_omitted_mailbox_policy(monkeypatch):
+    # Synthetic mailbox object IDs in GUID textual form; never real tenant identifiers.
+    main_id = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+    billings_id = "d4c3b2a1-6f5e-47a6-9876-543210fedcba"
+    replacement_id = "deadbeef-0000-4000-8000-0000000000ff"
+    payload = {"tenant_id": "t", "client_id": "c", "user_id": "u",
+               "authentication_mode": "application", "capabilities": {"outlook": {"search": True}}}
+    state = {"plugins": {"entries": {"microsoft365": {"settings": {
+        **payload, "allowed_mailbox_ids": [main_id, billings_id],
+    }}}}}
+    monkeypatch.setattr(plugin_api, "load_config", lambda: state)
+    monkeypatch.setattr(plugin_api, "save_config", lambda config, **kwargs: state.update(config))
+    client = TestClient(plugin_api.create_app())
+    assert main_id not in client.get("/configuration").text and billings_id not in client.get("/configuration").text
+    response = client.put("/configuration", json=payload)
+    assert response.status_code == 200
+    assert main_id not in response.text and billings_id not in response.text
+    assert state["plugins"]["entries"]["microsoft365"]["settings"]["allowed_mailbox_ids"] == [main_id, billings_id]
+    response = client.put("/configuration", json={**payload, "allowed_mailbox_ids": [replacement_id]})
+    assert response.status_code == 200
+    assert replacement_id not in response.text
+    assert state["plugins"]["entries"]["microsoft365"]["settings"]["allowed_mailbox_ids"] == [replacement_id]
+    assert client.put("/configuration", json={**payload, "allowed_mailbox_ids": "invalid"}).status_code == 400
+    assert client.put("/configuration", json={**payload, "allowed_mailbox_ids": ["not-a-guid"]}).status_code == 400
+    assert client.put("/configuration", json={**payload, "allowed_mailbox_ids": []}).status_code == 200
+    assert not state["plugins"]["entries"]["microsoft365"]["settings"].get("allowed_mailbox_ids")

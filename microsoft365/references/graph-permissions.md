@@ -4,7 +4,7 @@ This is a conservative pre-release matrix for local administrative reporting. It
 
 | Service / operation | Application role(s) | Application status | Delegated status |
 |---|---|---|---|
-| Outlook search/read | `Mail.Read` | supported | not implemented |
+| Outlook search/read/list_attachments/download_attachment | `Mail.Read` | supported | not implemented |
 | Outlook draft | `Mail.ReadWrite` | supported | not implemented |
 | Outlook send | `Mail.Send` | supported | not implemented |
 | SharePoint search/read | `Sites.Read.All` | supported | not implemented |
@@ -16,6 +16,26 @@ This is a conservative pre-release matrix for local administrative reporting. It
 | Teams send message | none claimed | unsupported auth mode | requires delegated implementation |
 | To Do (5 operations) | endpoint-specific, see "Microsoft To Do endpoint claims" | reads supported, writes `not_verified` | not implemented |
 | Planner (6 operations) | endpoint-specific, see "Planner endpoint claims" | contract verified offline, not executable | not implemented |
+
+## Outlook attachment permission claims
+
+`outlook.list_attachments` uses `GET /users/{user_id}/messages/{message_id}/attachments`.
+`outlook.download_attachment` uses `GET /users/{user_id}/messages/{message_id}/attachments/{attachment_id}`
+for metadata and selected file content. Both require application `Mail.Read` as the
+least-privileged permission documented by Microsoft for message attachments. No
+`Mail.ReadWrite`, `Mail.Send` or delegated shared-mail scope is needed by this
+application-mode read-only workflow. Tenant consent and mailbox authorization remain
+separate prerequisites; the local allowlist cannot grant either.
+
+Official endpoint references consulted for this extension:
+
+- https://learn.microsoft.com/en-us/graph/api/message-list-attachments
+- https://learn.microsoft.com/en-us/graph/api/attachment-get
+
+Claims remain `documented_not_verified`: documentation and offline SDK tests are not
+live tenant evidence. Listing requests metadata only; downloading supports ordinary
+file attachments, not item/reference attachments. Search is invoice-candidate discovery,
+not automatic invoice classification, OCR, reconciliation or financial submission.
 
 ## Planner endpoint claims
 

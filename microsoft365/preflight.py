@@ -27,7 +27,11 @@ def _requirements(settings: Settings, selected: list[str]) -> dict[str, bool]:
     return {
         "tenant_id": application and bool(selected),
         "client_id": application and bool(selected),
-        "user_id": any("user_id" in definition.required_identifiers for definition in definitions),
+        "user_id": any(
+            "user_id" in definition.required_identifiers
+            and not (definition.service == "outlook" and settings.allowed_mailbox_ids)
+            for definition in definitions
+        ),
     }
 
 

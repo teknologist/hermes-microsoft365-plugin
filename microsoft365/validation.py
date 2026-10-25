@@ -52,7 +52,7 @@ import binascii
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from .contract import OPERATIONS, OPERATION_REGISTRY, TODO_TASK_WRITE_FIELDS, Settings
 from .errors import CATEGORIES, GraphError
@@ -152,6 +152,8 @@ USER_IDENTIFIERS = ("user_id",)
 USER_SCOPED_OPERATIONS = frozenset(
     {
         "outlook.search",
+        "outlook.list_attachments",
+        "outlook.download_attachment",
         "outlook.read",
         "outlook.create_draft",
         "outlook.send",
@@ -396,8 +398,29 @@ def _build_contracts() -> dict[str, OperationArguments]:
                 _spec("user_id", "identifier", required=True),
                 _spec("query", "text"),
                 _spec("filter", "text"),
+                _spec("has_attachments", "boolean"),
+                _spec("sender", "text", max_length=318),
+                _spec("received_after", "timestamp"),
+                _spec("received_before", "timestamp"),
                 _spec("select", "select"),
                 _integer("top", 1, 100),
+            ),
+        ),
+        "outlook.list_attachments": OperationArguments(
+            key="outlook.list_attachments",
+            properties=(
+                _spec("user_id", "identifier", required=True),
+                _spec("message_id", "identifier", required=True),
+                _integer("top", 1, 100),
+            ),
+        ),
+        "outlook.download_attachment": OperationArguments(
+            key="outlook.download_attachment",
+            properties=(
+                _spec("user_id", "identifier", required=True),
+                _spec("message_id", "identifier", required=True),
+                _spec("attachment_id", "identifier", required=True),
+                _spec("save_to_disk", "boolean"),
             ),
         ),
         "outlook.read": OperationArguments(
@@ -942,6 +965,56 @@ def _validate_mapping(context: _Context, name: str, value: Any, spec: ArgumentSp
         )
 
 
+def _check_outlook_search_filters(context: _Context) -> None:
+    """Cross-argument rules of ``outlook.search`` no single property check can express.
+
+    Runs only after every declared property has validated, so a payload rejected here has
+    already passed every property-level rule, and the two ways of narrowing a search are
+    refused when combined instead of one of them being dropped silently.
+    """
+    supplied = context.arguments
+    if "filter" in supplied and (
+        "query" in supplied
+        or any(
+            name in supplied
+            for name in ("has_attachments", "sender", "received_after", "received_before")
+        )
+    ):
+        _reject(
+            "the raw OData filter cannot be combined with the subject query or the "
+            "structured filters: supply the raw filter alone or the query and "
+            "structured filters alone, never both"
+        )
+    sender = supplied.get("sender")
+    if isinstance(sender, str) and not _EMAIL_PATTERN.match(sender):
+        _reject(
+            "sender must be an email address: the structured sender filter is built from "
+            "an address, not free text"
+        )
+    after = supplied.get("received_after")
+    before = supplied.get("received_before")
+    if isinstance(after, str) and isinstance(before, str):
+        try:
+            lower = datetime.fromisoformat(after)
+            upper = datetime.fromisoformat(before)
+        except ValueError:
+            return  # the property check already rejects what it cannot parse
+        if lower.tzinfo is not None and upper.tzinfo is not None and lower >= upper:
+            _reject(
+                "received_after must be strictly earlier than received_before: "
+                "received_after is inclusive and received_before exclusive, so equal "
+                "or reversed bounds make the range empty"
+            )
+
+
+#: Cross-argument rules a single property check cannot express, keyed by operation. A
+#: payload that fails one is refused in :func:`check` before approval, secrets, a
+#: credential or a Graph client.
+_CROSS_ARGUMENT_CHECKS: Mapping[str, Callable[[_Context], None]] = {
+    "outlook.search": _check_outlook_search_filters,
+}
+
+
 #: One validator per kind. Adding a kind to :data:`KINDS` without adding it here is a
 #: programming error, not a silently skipped check.
 _KIND_VALIDATORS: Mapping[str, Any] = {
@@ -1012,13 +1085,26 @@ def _validate_arguments(context: _Context, contract: OperationArguments) -> None
                 f"{context.key} accepts at most one of these argument forms: "
                 f"{exclusion.description}"
             )
+    cross_check = _CROSS_ARGUMENT_CHECKS.get(context.key)
+    if cross_check is not None:
+        cross_check(context)
 
 
 def _check_bound_user(settings: Settings, key: str, arguments: Mapping[str, Any]) -> Rejection | None:
-    """Enforce the configured profile's single-user resource boundary."""
-    configured = settings.user_id.strip()
+    """Enforce the Outlook allowlist or the legacy single-user resource boundary."""
     definition = OPERATION_REGISTRY[key]
-    if not configured or "user_id" not in definition.required_identifiers:
+    if "user_id" not in definition.required_identifiers:
+        return None
+    if definition.service == "outlook" and settings.allowed_mailbox_ids:
+        supplied = arguments.get("user_id")
+        if not isinstance(supplied, str) or supplied not in settings.allowed_mailbox_ids:
+            return Rejection(
+                "validation_error",
+                f"microsoft365.{key}: user_id is outside the configured Outlook mailbox allowlist",
+            )
+        return None
+    configured = settings.user_id.strip()
+    if not configured:
         return None
     supplied = arguments.get("user_id")
     if not isinstance(supplied, str) or not supplied.strip() or supplied.strip() != configured:

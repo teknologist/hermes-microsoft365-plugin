@@ -633,6 +633,7 @@ def test_every_row_in_apendice_a_is_bound_to_an_endpoint_or_a_declared_gap():
     import microsoft365.sdk_contract as sdk_contract
 
     assert sdk_contract.ITEM_READ_CASES == (
+        "outlook_attachment",
         "outlook_read",
         "calendar_read",
         "todo_read",

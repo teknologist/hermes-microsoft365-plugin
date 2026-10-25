@@ -12,7 +12,7 @@ def test_every_executable_operation_has_handler_metadata_and_sdk_case():
                 if not call_name:
                     continue
                 assert hasattr(sdk_contract, call_name), (key, call_name)
-                assert case in {"outlook_messages", "outlook_read", "calendar_events", "calendar_read", "todo_lists", "todo_tasks", "todo_read", "planner_plans", "planner_buckets", "planner_tasks", "planner_read", "drive_search", "drive_item_read", "download_files", "sites_search", "teams_joined", "teams_channels"}, (key, case)
+                assert case in {"outlook_attachments", "outlook_attachment", "outlook_messages", "outlook_read", "calendar_events", "calendar_read", "todo_lists", "todo_tasks", "todo_read", "planner_plans", "planner_buckets", "planner_tasks", "planner_read", "drive_search", "drive_item_read", "download_files", "sites_search", "teams_joined", "teams_channels"}, (key, case)
 
 
 def test_registry_executable_set_is_exact_and_writes_are_withheld():
@@ -21,7 +21,7 @@ def test_registry_executable_set_is_exact_and_writes_are_withheld():
     from microsoft365.contract import Settings
 
     expected = {
-        "outlook.search", "outlook.read", "calendar.search",
+        "outlook.search", "outlook.read", "outlook.list_attachments", "outlook.download_attachment", "calendar.search",
         "sharepoint.search", "sharepoint.read", "sharepoint.download_files",
         "onedrive.search", "onedrive.read", "onedrive.download_files",
         "teams.list_teams", "teams.list_channels",

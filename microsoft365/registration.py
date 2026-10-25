@@ -157,6 +157,11 @@ def service_tool_handler(
         return unavailable_handler(args, service=service)
     if not operation_is_executable(settings, service, operation):
         return json.dumps(not_executable_payload(service, operation))
+    if settings is not None:
+        # Direct dispatch must enforce the same final-payload boundary as registration.
+        rejection = check_operation_arguments(settings, service=service, arguments=args)
+        if rejection is not None:
+            return json.dumps(rejection.to_payload())
     try:
         return invoke_handler(handler, args)
     except ExecutionError as exc:
@@ -220,6 +225,7 @@ def _read_settings(ctx):
             ("tenant_id", ""),
             ("client_id", ""),
             ("user_id", ""),
+            ("allowed_mailbox_ids", []),
             ("authentication_mode", "application"),
             ("capabilities", {}),
         )

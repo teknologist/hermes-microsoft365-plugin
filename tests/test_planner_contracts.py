@@ -31,7 +31,7 @@ KNOWN_LIMITATIONS = REPO_ROOT / "docs" / "known-limitations.md"
 #: read flag passes.
 EXECUTABLE_READS = frozenset(
     {
-        "outlook.search", "outlook.read", "calendar.search",
+        "outlook.search", "outlook.read", "outlook.list_attachments", "outlook.download_attachment", "calendar.search",
         "sharepoint.search", "sharepoint.read", "sharepoint.download_files",
         "onedrive.search", "onedrive.read", "onedrive.download_files",
         "teams.list_teams", "teams.list_channels",

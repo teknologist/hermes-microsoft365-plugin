@@ -10,6 +10,13 @@ from kiota_abstractions.serialization.parsable import Parsable
 # (``client.py`` resolves ``azure.identity``/``msgraph`` at execution time only).
 _FRAMEWORK_FIELDS = frozenset({"backing_store", "additional_data"})
 
+#: The compact candidate-metadata ``$select`` the outlook messages collection read sends when
+#: the caller names no field of its own. Pinned here as a literal -- deliberately *not*
+#: imported from the handler -- so the request pin in ``tests/test_handlers_outlook_calendar.py``
+#: (which asserts the same literal, not the handler constant) catches a drift of the default
+#: select on either side instead of computing the expected result from it.
+OUTLOOK_MESSAGES_DEFAULT_SELECT = ["id", "subject", "from", "receivedDateTime", "hasAttachments", "webLink"]
+
 
 def _required(value: str, name: str) -> str:
     value = str(value or "").strip()
@@ -51,6 +58,7 @@ def build_collection_request_information(
     *,
     user_id: str = "",
     todo_list_id: str = "",
+    message_id: str = "",
     drive_id: str = "",
     drive_item_id: str = "",
     team_id: str = "",
@@ -71,9 +79,19 @@ def build_collection_request_information(
     instead of silently falling back to the global route.
     """
     bounded = _limit(limit)
+    if case == "outlook_attachments":
+        builder = client.users.by_user_id(_required(user_id, "user_id")).messages.by_message_id(
+            _required(message_id, "message_id")
+        ).attachments
+        return _request(builder, top=bounded, select=["id", "name", "size", "contentType", "isInline"])
     if case == "outlook_messages":
         builder = client.users.by_user_id(_required(user_id, "user_id")).messages
-        return _request(builder, top=bounded, filter=f"contains(subject,'{_odata_literal(query)}')")
+        return _request(
+            builder,
+            top=bounded,
+            select=list(OUTLOOK_MESSAGES_DEFAULT_SELECT),
+            filter=f"contains(subject,'{_odata_literal(query)}')",
+        )
     if case == "calendar_events":
         builder = client.users.by_user_id(_required(user_id, "user_id")).calendar.events
         return _request(builder, top=bounded, filter=f"contains(subject,'{_odata_literal(query)}')")
@@ -112,6 +130,7 @@ def build_collection_request_information(
 
 
 ITEM_READ_CASES: tuple[str, ...] = (
+    "outlook_attachment",
     "outlook_read",
     "calendar_read",
     "todo_read",
@@ -133,6 +152,7 @@ def build_item_request_information(
     drive_id: str = "",
     drive_item_id: str = "",
     select=None,
+    attachment_id: str = "",
 ):
     """Build request info for a *single item* read (Apêndice A "item" rows).
 
@@ -145,6 +165,11 @@ def build_item_request_information(
         builder = client.users.by_user_id(_required(user_id, "user_id")).messages.by_message_id(
             _required(message_id, "message_id")
         )
+        return _request(builder, select=fields)
+    if case == "outlook_attachment":
+        builder = client.users.by_user_id(_required(user_id, "user_id")).messages.by_message_id(
+            _required(message_id, "message_id")
+        ).attachments.by_attachment_id(_required(attachment_id, "attachment_id"))
         return _request(builder, select=fields)
     if case == "calendar_read":
         builder = client.users.by_user_id(_required(user_id, "user_id")).calendar.events.by_event_id(

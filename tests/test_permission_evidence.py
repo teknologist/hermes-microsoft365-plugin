@@ -60,6 +60,6 @@ def test_unsupported_teams_application_operations_remain_claim_free():
         assert definition.app.permission_status == "no_permission_claimed"
 
 
-def test_all_thirty_operations_are_present_in_the_evidence_matrix():
-    assert len(OPERATION_REGISTRY) == 30
+def test_all_thirty_two_operations_are_present_in_the_evidence_matrix():
+    assert len(OPERATION_REGISTRY) == 32
     assert {endpoint_key(row) for row in ALL_ENDPOINTS} == set(OPERATION_REGISTRY)

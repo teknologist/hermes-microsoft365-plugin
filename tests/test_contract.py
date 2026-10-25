@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 EXPECTED_OPERATIONS = {
-    "outlook": ("search", "read", "create_draft", "send"),
+    "outlook": ("search", "read", "list_attachments", "download_attachment", "create_draft", "send"),
     "sharepoint": ("search", "read", "download_files", "upload_files"),
     "onedrive": ("search", "read", "download_files", "upload_files"),
     "calendar": ("search", "create_events", "update_events"),
@@ -17,7 +17,7 @@ EXPECTED_OPERATIONS = {
 #: a lost read flag passes.
 EXECUTABLE_READS = frozenset(
     {
-        "outlook.search", "outlook.read", "calendar.search",
+        "outlook.search", "outlook.read", "outlook.list_attachments", "outlook.download_attachment", "calendar.search",
         "sharepoint.search", "sharepoint.read", "sharepoint.download_files",
         "onedrive.search", "onedrive.read", "onedrive.download_files",
         "teams.list_teams", "teams.list_channels",
@@ -29,7 +29,7 @@ EXECUTABLE_READS = frozenset(
 #: The operations whose service now declares a verified endpoint table with a contract case
 #: per row (Outlook and Calendar, WP6). Every other operation reports "not recorded".
 MESSAGING_OPERATIONS = frozenset(
-    {"outlook.search", "outlook.read", "outlook.create_draft", "outlook.send",
+    {"outlook.search", "outlook.read", "outlook.list_attachments", "outlook.download_attachment", "outlook.create_draft", "outlook.send",
      "calendar.search", "calendar.create_events", "calendar.update_events"}
 )
 

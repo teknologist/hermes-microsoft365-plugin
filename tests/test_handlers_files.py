@@ -228,7 +228,7 @@ def test_the_dispatch_table_is_exactly_the_implemented_handler_set():
     from microsoft365.registration import HANDLER_TABLE
 
     implemented = {
-        "outlook.search", "outlook.read", "outlook.create_draft", "outlook.send",
+        "outlook.search", "outlook.read", "outlook.list_attachments", "outlook.download_attachment", "outlook.create_draft", "outlook.send",
         "calendar.search", "calendar.create_events", "calendar.update_events",
         "teams.list_teams", "teams.list_channels", "teams.search_messages", "teams.send_messages",
     } | set(WP7_HANDLERS)
@@ -609,7 +609,7 @@ def test_the_registry_declares_exactly_the_six_file_reads_executable():
     from microsoft365.contract import EXECUTABLE_OPERATIONS
 
     assert set(EXECUTABLE_OPERATIONS) == {
-        "outlook.search", "outlook.read", "calendar.search",
+        "outlook.search", "outlook.read", "outlook.list_attachments", "outlook.download_attachment", "calendar.search",
         "teams.list_teams", "teams.list_channels",
     } | set(WP7_EXECUTABLE) | {"todo.list_task_lists", "todo.search", "todo.read", "planner.list_plans", "planner.list_buckets", "planner.list_tasks", "planner.read"}
 

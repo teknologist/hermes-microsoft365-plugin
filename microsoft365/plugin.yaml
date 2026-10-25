@@ -7,7 +7,7 @@ author: Fabio Motta
 kind: standalone
 license: MIT
 homepage: https://github.com/fabiomotta0311/hermes-microsoft365-plugin
-requires_hermes: ">=0.21.3,<0.22"
+requires_hermes: ">=0.21.3,<0.23"
 tags: [microsoft365, graph, outlook, onedrive, sharepoint, calendar, teams, todo, planner]
 python_dependencies:
   - "msgraph-sdk==1.64.0"
@@ -35,5 +35,6 @@ config_schema:
   tenant_id: {type: str, required: true, description: "Microsoft Entra tenant ID"}
   client_id: {type: str, required: true, description: "Microsoft Entra application/client ID"}
   user_id: {type: str, default: "", description: "Explicit Graph user ID for user-scoped application operations"}
+  allowed_mailbox_ids: {type: list, default: [], description: "Outlook-only explicit mailbox IDs; nonempty list overrides user_id for Outlook only"}
   authentication_mode: {type: str, default: application, description: "Authentication mode; this milestone executes application mode only"}
   capabilities: {type: dict, required: true, description: "Strict operation-level boolean flags"}

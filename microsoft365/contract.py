@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Any, Mapping
 
 OPERATIONS = {
-    "outlook": ("search", "read", "create_draft", "send"),
+    "outlook": ("search", "read", "list_attachments", "download_attachment", "create_draft", "send"),
     "sharepoint": ("search", "read", "download_files", "upload_files"),
     "onedrive": ("search", "read", "download_files", "upload_files"),
     "calendar": ("search", "create_events", "update_events"),
@@ -714,6 +715,27 @@ MESSAGING_CONTAINER = "user"
 
 OUTLOOK_ENDPOINTS: tuple[MessagingEndpoint, ...] = (
     MessagingEndpoint(
+        service="outlook", operation="download_attachment", method="GET",
+        path_template="/users/{user_id}/messages/{message_id}/attachments/{attachment_id}",
+        container=MESSAGING_CONTAINER,
+        path_identifiers=("user_id", "message_id", "attachment_id"),
+        application_permissions=("Mail.Read",),
+        contract_call="build_item_request_information", contract_case="outlook_attachment",
+        documentation_page="https://learn.microsoft.com/en-us/graph/api/attachment-get",
+    ),
+    MessagingEndpoint(
+        service="outlook",
+        operation="list_attachments",
+        method="GET",
+        path_template="/users/{user_id}/messages/{message_id}/attachments",
+        container=MESSAGING_CONTAINER,
+        path_identifiers=("user_id", "message_id"),
+        application_permissions=("Mail.Read",),
+        contract_call="build_collection_request_information",
+        contract_case="outlook_attachments",
+        documentation_page="https://learn.microsoft.com/en-us/graph/api/message-list-attachments",
+    ),
+    MessagingEndpoint(
         service="outlook",
         operation="search",
         method="GET",
@@ -821,6 +843,8 @@ CALENDAR_ENDPOINTS: tuple[MessagingEndpoint, ...] = (
 MESSAGING_ENDPOINTS: tuple[MessagingEndpoint, ...] = OUTLOOK_ENDPOINTS + CALENDAR_ENDPOINTS
 
 MESSAGING_OPERATIONS: tuple[str, ...] = (
+    "outlook.download_attachment",
+    "outlook.list_attachments",
     "outlook.search",
     "outlook.read",
     "outlook.create_draft",
@@ -835,6 +859,8 @@ MESSAGING_OPERATIONS: tuple[str, ...] = (
 #: exposing an operation is a decision, and every write stays non-executable until the generic
 #: host approval fix (CORE-1/CORE-2) is available in a supported Hermes release (R5, D1).
 EXECUTABLE_OPERATIONS: tuple[str, ...] = (
+    "outlook.download_attachment",
+    "outlook.list_attachments",
     "outlook.search",
     "outlook.read",
     "calendar.search",
@@ -1184,6 +1210,8 @@ NO_PERMISSION_CONSENT_BASIS = (
 #: does not make delegated authentication available, and no row of the application map is
 #: used to build them.
 _DELEGATED_SCOPES: dict[str, tuple[str, ...]] = {
+    "outlook.download_attachment": ("Mail.Read",),
+    "outlook.list_attachments": ("Mail.Read",),
     "outlook.search": ("Mail.Read",),
     "outlook.read": ("Mail.Read",),
     "outlook.create_draft": ("Mail.ReadWrite",),
@@ -1590,6 +1618,15 @@ class ConfigurationError(ValueError):
     pass
 
 
+#: The strict textual shape of a mailbox object ID: a 36-character GUID of 8-4-4-4-12
+#: hex digits. Matching is case-insensitive on the hex characters but the entry is
+#: retained verbatim (no stripping, no case-folding), so a whitespace-padded ID is
+#: rejected rather than silently repaired, and wildcard or UPN forms never match.
+_MAILBOX_ID_SHAPE = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+
+
 def operation_status(auth_mode: str, service: str, operation: str) -> OperationStatus:
     """The honest status of one operation in one authentication mode, read from the matrix.
 
@@ -1629,6 +1666,33 @@ class Settings:
     user_id: str = ""
     authentication_mode: str = "application"
     capabilities: Mapping[str, Mapping[str, bool]] = field(default_factory=dict)
+    allowed_mailbox_ids: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        """Reject a malformed mailbox policy without disclosing configured identifiers.
+
+        Every entry must be an explicit mailbox object ID in GUID textual form
+        (8-4-4-4-12 hex digits). Wildcard forms, UPN/other identifier forms, and
+        whitespace-padded or otherwise malformed tokens are refused instead of
+        silently repaired; a valid entry is retained verbatim, so the boundary
+        comparison downstream stays exact. Duplicates are detected case-insensitively
+        because a mailbox object ID is a UUID: the same ID spelled with different
+        hex case is still one mailbox.
+        """
+        if type(self.allowed_mailbox_ids) is not list:
+            raise ConfigurationError("allowed_mailbox_ids must be a list of explicit mailbox object IDs")
+        seen = set()
+        for value in self.allowed_mailbox_ids:
+            if type(value) is not str or not _MAILBOX_ID_SHAPE.fullmatch(value):
+                raise ConfigurationError(
+                    "allowed_mailbox_ids must contain only explicit mailbox object IDs in "
+                    "GUID textual form (8-4-4-4-12 hex digits); wildcard and other "
+                    "identifier forms are not accepted"
+                )
+            key = value.lower()
+            if key in seen:
+                raise ConfigurationError("allowed_mailbox_ids must not contain duplicate mailbox IDs")
+            seen.add(key)
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any] | None) -> "Settings":
@@ -1674,6 +1738,7 @@ class Settings:
             user_id=str(raw.get("user_id") or ""),
             authentication_mode=str(mode),
             capabilities=normalized,
+            allowed_mailbox_ids=raw.get("allowed_mailbox_ids", []),
         )
 
     def selected(self, service: str) -> set[str]:

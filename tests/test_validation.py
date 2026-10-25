@@ -64,6 +64,8 @@ APPLICATION_UNREACHABLE = ("teams.search_messages", "teams.send_messages")
 
 #: One known-good payload per operation that application mode can run today.
 VALID_PAYLOADS: dict[str, dict] = {
+    "outlook.list_attachments": {"action": "list_attachments", "user_id": USER, "message_id": "message"},
+    "outlook.download_attachment": {"action": "download_attachment", "user_id": USER, "message_id": "message", "attachment_id": "attachment"},
     "outlook.search": {"action": "search", "user_id": USER, "query": "subject:invoice", "top": 10},
     "outlook.read": {"action": "read", "user_id": USER, "message_id": "AAMkAG"},
     "outlook.create_draft": {
@@ -372,6 +374,8 @@ def test_application_roles_are_pinned_per_operation():
     from microsoft365.contract import OPERATION_REGISTRY
 
     assert {key: definition.app.permissions for key, definition in OPERATION_REGISTRY.items()} == {
+        "outlook.list_attachments": ("Mail.Read",),
+        "outlook.download_attachment": ("Mail.Read",),
         "outlook.search": ("Mail.Read",),
         "outlook.read": ("Mail.Read",),
         "outlook.create_draft": ("Mail.ReadWrite",),
@@ -409,6 +413,8 @@ def test_delegated_scopes_are_recorded_independently_of_the_application_roles():
     from microsoft365.contract import OPERATION_REGISTRY
 
     expected = {
+        "outlook.list_attachments": ("Mail.Read",),
+        "outlook.download_attachment": ("Mail.Read",),
         "outlook.search": ("Mail.Read",),
         "outlook.read": ("Mail.Read",),
         "outlook.create_draft": ("Mail.ReadWrite",),
@@ -604,7 +610,7 @@ def test_only_the_three_verified_reads_are_executable_and_every_handler_is_regis
     from microsoft365.contract import OPERATION_REGISTRY
     from microsoft365.registration import HANDLER_TABLE
 
-    assert len(OPERATION_REGISTRY) == 30
+    assert len(OPERATION_REGISTRY) == 32
     assert {
         key for key, definition in OPERATION_REGISTRY.items() if definition.executable
     } == set(EXECUTABLE_READS)
@@ -1088,7 +1094,7 @@ def test_dispatch_path_rejects_before_reaching_a_registered_handler(monkeypatch)
 #: The eleven reads this milestone exposes to the model.
 EXECUTABLE_READS = frozenset(
     {
-        "outlook.search", "outlook.read", "calendar.search",
+        "outlook.search", "outlook.read", "outlook.list_attachments", "outlook.download_attachment", "calendar.search",
         "sharepoint.search", "sharepoint.read", "sharepoint.download_files",
         "onedrive.search", "onedrive.read", "onedrive.download_files",
         "teams.list_teams", "teams.list_channels",
@@ -1381,3 +1387,65 @@ def test_validation_module_keeps_no_secret_credential_or_client_access():
         "msgraph",
     ):
         assert forbidden not in source
+
+# -- outlook.search structured filters: cross-argument rules (foundation slice) ---------
+
+
+def test_outlook_search_structured_filters_are_validated_before_any_client_work():
+    """The same ``check`` the hook and the dispatch path both call refuses an invalid
+    sender, a raw/structured filter conflict and a reversed date range, while a
+    well-formed structured search (including the boolean ``false``) passes."""
+    base = {"action": "search", "user_id": USER}
+    valid = {
+        **base,
+        "query": "facture",
+        "has_attachments": False,
+        "sender": "o'hara@example.test",
+        "received_after": "2026-10-01T00:00:00Z",
+        "received_before": "2026-11-01T00:00:00Z",
+        "top": 20,
+    }
+    assert _check("outlook", valid) is None
+
+    for payload in (
+        {**base, "sender": "not-an-address"},
+        {**base, "filter": "isRead eq false", "has_attachments": True},
+        {**base, "filter": "isRead eq false", "sender": "a@example.test"},
+        {**base, "filter": "isRead eq false", "received_after": "2026-10-01T00:00:00Z"},
+        {
+            **base,
+            "received_after": "2026-11-01T00:00:00Z",
+            "received_before": "2026-10-01T00:00:00Z",
+        },
+        # reversed although the raw wall-clock ordering looks fine: the offsets differ
+        # (2026-10-02T01:00:00+02:00 is 2026-10-01T23:00:00Z)
+        {
+            **base,
+            "received_after": "2026-10-02T00:00:00Z",
+            "received_before": "2026-10-02T01:00:00+02:00",
+        },
+        # equal bounds: received_after is inclusive and received_before exclusive,
+        # so the interval is empty and must be refused, not silently searched
+        {
+            **base,
+            "received_after": "2026-10-01T00:00:00Z",
+            "received_before": "2026-10-01T00:00:00Z",
+        },
+        # equal instants with different zone offsets
+        {
+            **base,
+            "received_after": "2026-10-02T00:00:00Z",
+            "received_before": "2026-10-01T22:00:00-02:00",
+        },
+        # the raw filter and the subject query are two different filters:
+        # combined, the query would be silently dropped
+        {**base, "filter": "isRead eq false", "query": "facture"},
+    ):
+        rejection = _check("outlook", payload)
+        assert rejection is not None, payload
+        assert rejection.category == "validation_error", payload
+
+    # The raw filter alone, and the structured filters alone, remain fully valid.
+    assert _check("outlook", {**base, "filter": "isRead eq false"}) is None
+    assert _check("outlook", {**base, "has_attachments": False}) is None
+    assert _check("outlook", {**base, "query": "facture"}) is None

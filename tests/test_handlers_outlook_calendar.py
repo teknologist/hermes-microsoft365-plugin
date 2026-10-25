@@ -39,7 +39,6 @@ from typing import Any
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 import pytest
-from kiota_abstractions.base_request_configuration import RequestConfiguration
 from kiota_abstractions.headers_collection import HeadersCollection
 from kiota_abstractions.request_adapter import RequestAdapter
 from kiota_serialization_json.json_serialization_writer_factory import JsonSerializationWriterFactory
@@ -75,6 +74,7 @@ CALENDAR_UPDATE_EVENTS = "calendar.update_events"
 #: The eight operations WP6 owns.
 WP6_HANDLERS = frozenset(
     {
+        "outlook.list_attachments", "outlook.download_attachment",
         OUTLOOK_SEARCH,
         OUTLOOK_READ,
         OUTLOOK_CREATE_DRAFT,
@@ -255,7 +255,7 @@ def test_load_handlers_imports_every_module_the_package_exposes():
 
     names = {module.name for module in pkgutil.iter_modules(handler_package.__path__)}
 
-    assert names == {"outlook", "calendar", "files", "teams", "todo", "planner"}
+    assert names == {"outlook", "outlook_attachments", "calendar", "files", "teams", "todo", "planner"}
     load_handlers()
     for name in names:
         assert f"{handler_package.__name__}.{name}" in sys.modules
@@ -394,13 +394,21 @@ def test_outlook_search_builds_the_verified_request_and_reports_the_page():
     payload = run(OUTLOOK_SEARCH, {"action": "search", "user_id": USER, "query": "hello", "top": 7}, adapter)
 
     client = graph_client(adapter)
+    # A search that named no select of its own carries the compact candidate metadata; the pin
+    # is the shared ``outlook_messages`` request contract, which now declares that select as an
+    # independent literal (not the handler constant), so a drift of the default select fails.
     verified = build_collection_request_information(
         client, "outlook_messages", user_id=USER, query="hello", limit=7
     )
     assert request_identity(adapter.requests[0]) == request_identity(verified)
+    # the default select is the compact candidate metadata, asserted literally
+    assert search_query(adapter.requests[0])["select"] == [
+        "id", "subject", "from", "receivedDateTime", "hasAttachments", "webLink",
+    ]
     assert payload["operation"] == OUTLOOK_SEARCH
     assert payload["status"] == "succeeded"
-    assert payload["result"]["value"] == [{"id": "m1", "additional_data": {}}]
+    # only the field ``m1`` carries is projected; the absent metadata is not invented
+    assert payload["result"]["value"] == [{"id": "m1"}]
     assert payload["continuation"] == {
         "truncated": False,
         "next_link_present": False,
@@ -1155,8 +1163,12 @@ def test_outlook_search_applies_the_declared_item_budget_when_none_was_asked_for
 
     run(OUTLOOK_SEARCH, {"action": "search", "user_id": USER}, adapter)
 
-    # No query and no filter: no ``$filter`` is sent at all, and the budget is the default.
-    assert search_query(adapter.requests[0]) == {"top": 50}
+    # No query and no filter: no ``$filter`` is sent at all, the budget is the default, and a
+    # select-less search still carries the compact candidate metadata (never the body).
+    assert search_query(adapter.requests[0]) == {
+        "top": 50,
+        "select": ["id", "subject", "from", "receivedDateTime", "hasAttachments", "webLink"],
+    }
 
 
 @pytest.mark.parametrize("top", [0, 101, "5", True])
@@ -1387,7 +1399,7 @@ def test_create_events_refuses_when_a_field_did_not_reach_the_request(monkeypatc
 #: literally, so a reverted flag -- or one flag too many -- fails here.
 EXECUTABLE_OPERATIONS = frozenset(
     {
-        OUTLOOK_SEARCH, OUTLOOK_READ, CALENDAR_SEARCH,
+        OUTLOOK_SEARCH, OUTLOOK_READ, "outlook.list_attachments", "outlook.download_attachment", CALENDAR_SEARCH,
         "sharepoint.search", "sharepoint.read", "sharepoint.download_files",
         "onedrive.search", "onedrive.read", "onedrive.download_files",
         "teams.list_teams", "teams.list_channels",
@@ -1413,9 +1425,11 @@ IMPLEMENTED_OPERATIONS = EXECUTABLE_OPERATIONS | NON_EXECUTABLE_WRITES
 #: Concrete identifiers for the declared endpoint rows, and the extra arguments each contract
 #: case needs. Used to rebuild every declared endpoint for real (see
 #: ``test_the_declared_messaging_endpoints_are_the_ones_the_sdk_contract_builds``).
-ENDPOINT_IDENTIFIERS = {"user_id": USER, "message_id": MESSAGE, "event_id": EVENT}
+ENDPOINT_IDENTIFIERS = {"attachment_id": "attachment", "user_id": USER, "message_id": MESSAGE, "event_id": EVENT}
 
 ENDPOINT_CASE_ARGUMENTS: dict[tuple[str, str], dict] = {
+    ("build_collection_request_information", "outlook_attachments"): {},
+    ("build_item_request_information", "outlook_attachment"): {},
     ("build_collection_request_information", "outlook_messages"): {"query": "invoice"},
     ("build_collection_request_information", "calendar_events"): {"query": "planning"},
     ("build_item_request_information", "outlook_read"): {},
@@ -1563,7 +1577,7 @@ def test_known_limitations_records_the_milestone_state():
 
     for key in sorted(IMPLEMENTED_OPERATIONS):
         assert key.split(".", 1)[1] in text or key in text, key
-    assert "Exactly eighteen reads are executable" in text
+    assert "Exactly twenty reads are executable" in text
     assert "`active_actions()` never returns them" in text
     assert "final arguments" in text
     # the pre-WP6 wording claimed nothing consumed the paginator

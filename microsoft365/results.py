@@ -8,6 +8,7 @@ from typing import Any, Mapping
 from .errors import GraphError, is_sensitive_key, is_structural_key, to_graph_error
 
 _MODEL_FIELDS = (
+    "has_attachments",
     "id", "name", "display_name", "subject", "title", "content", "size", "web_url",
     "created_date_time", "last_modified_date_time", "status", "plan_id", "bucket_id",
 )
@@ -90,7 +91,11 @@ def normalize_result(
     _seen: set[int] | None = None,
 ) -> Any:
     if isinstance(value, BinaryResult):
-        # Base64 is an integrity-bearing transport field, not display text.
+        # The *typed* binary carrier is the only recognized exception to the string rules:
+        # its base64 is an integrity-bearing transport field, produced exactly once by
+        # binary_result, so it passes through verbatim. A plain dict that merely *names* a
+        # content_base64 key gets no such exception: it is an attacker-shaped mapping and
+        # must go through redaction, string bounds, depth and cycle detection like any other.
         return {key: item for key, item in asdict(value).items() if item is not None}
     if isinstance(value, GraphError):
         return value.to_result()

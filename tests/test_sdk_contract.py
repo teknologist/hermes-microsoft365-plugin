@@ -48,7 +48,7 @@ def graph_client():
 @pytest.mark.parametrize(
     ("case", "expected_path", "expected_query"),
     [
-        ("outlook_messages", "/users/user/messages", {"%24filter": "contains(subject,'hello')", "%24top": 7}),
+        ("outlook_messages", "/users/user/messages", {"%24filter": "contains(subject,'hello')", "%24top": 7, "%24select": ["id", "subject", "from", "receivedDateTime", "hasAttachments", "webLink"]}),
         ("calendar_events", "/users/user/calendar/events", {"%24filter": "contains(subject,'hello')", "%24top": 7}),
         ("todo_lists", "/users/user/todo/lists", {"%24top": 7}),
         ("todo_tasks", "/users/user/todo/lists/list/tasks", {"%24filter": "contains(title,'hello')", "%24top": 7}),
