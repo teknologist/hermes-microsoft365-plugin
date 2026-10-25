@@ -1,6 +1,6 @@
 # Hermes Microsoft 365 Plugin
 
-> **Pre-release:** this repository is an offline-verified standalone foundation. It is not a production release and has not been tested against a Microsoft 365 tenant.
+> **Pre-release:** offline tests pass, but live Outlook attempts have exposed unresolved host-result and shared-mailbox access failures. This is not production-verified. See [development status](docs/development-status.md).
 
 One opt-in native Hermes plugin for Outlook, SharePoint, OneDrive, Calendar, Teams Graph, Microsoft To Do, and Planner. It preserves the complete requested operation catalog while exposing only operations that are both compatible with the selected authentication mode and implemented by the current milestone.
 
@@ -8,13 +8,24 @@ One opt-in native Hermes plugin for Outlook, SharePoint, OneDrive, Calendar, Tea
 
 ## Install for development
 
-```bash
-python -m pip install -e '.[test]'
-hermes plugins validate microsoft365
-hermes plugins doctor microsoft365 --ci
+```sh
+uv venv --python 3.13 .venv
+uv sync --frozen --extra test
+export HERMES_SOURCE="/absolute/path/to/hermes-agent"
+make check
+make validate
 ```
 
-A directory install is also supported: install this repository with `hermes plugins install <repo> --no-enable`, then explicitly enable `microsoft365`. `kind: standalone` keeps the plugin opt-in; installing it does not enable it.
+See [development setup and architecture](docs/development.md) for prerequisites and
+focused tests. This does not install into your active profile. For local deployment,
+tracked-fork updates, gateway/Desktop restarts and rollback, follow the
+[Hermes deployment runbook](docs/runbooks/hermes-deployment.md).
+
+## For coding agents
+
+Read [AGENTS.md](AGENTS.md), then [current development status](docs/development-status.md).
+The handoff records observed failures and acceptance criteria. Green offline tests
+alone do not establish a working live mailbox integration.
 
 ## Configuration
 
@@ -94,7 +105,8 @@ not mark mail read, move it, send anything or submit financial records.
 
 The durable boundaries are recorded in
 [ADR-001](docs/decisions/001-outlook-mailbox-and-artifact-boundaries.md).
-All evidence here is offline; tenant access and real-mailbox downloads remain untested.
+The examples are offline-verified. Live attempts have failed; successful tenant reads
+and real-mailbox downloads remain unverified. See the development handoff.
 
 ## Product contract
 

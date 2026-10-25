@@ -2,6 +2,11 @@
 
 This document states the boundary of the first standalone milestone. It is not release evidence.
 
+**Current operational status:** later live Outlook attempts failed at the host-result
+contract and shared-mailbox access boundaries. See [development status](development-status.md).
+Historical offline permission statements below do not establish tenant access; no
+successful end-to-end tenant verification has been recorded.
+
 ## Runtime and authentication
 
 - Only application/client-credentials client construction is implemented. Delegated OAuth, secure delegated token caching, and account-selection UX remain open.

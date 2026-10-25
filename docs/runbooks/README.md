@@ -1,6 +1,6 @@
 # Operational runbooks
 
-These runbooks apply to the Alpha-only `v0.1.0a2` pre-release. They describe safe local triage and release operations, not tenant verification or production support.
+These runbooks describe safe local triage and release operations for this pre-release, not proof of tenant verification or production support. Consult [current development status](../development-status.md) before operational changes.
 
 ## Safety rules
 
@@ -10,6 +10,8 @@ These runbooks apply to the Alpha-only `v0.1.0a2` pre-release. They describe saf
 - Stop and escalate privately when a security issue or suspected credential exposure is found.
 
 ## Runbooks
+
+- [Hermes deployment, updates, gateway/Desktop restarts and rollback](hermes-deployment.md)
 
 - [Consent and tenant readiness](consent.md)
 - [Graph response status triage](graph-errors.md): 401, 403, 404, 409, 412, 429, and 5xx
